@@ -153,25 +153,35 @@ syntax-check` / `make test` / `make e2e` individually).
 
 Only after that pipeline is green does
 `.github/workflows/deploy.yml` come into play —
-a separate, manually-triggered (`workflow_dispatch`) workflow that runs
-on a self-hosted runner with real network access, and always runs the
-read-only drift check, then a dry run, before an optional real apply.
-Protect `main` with a branch-protection rule requiring the CI workflow
-to pass, so a broken playbook can never reach the deploy stage.
+a separate, manually-triggered (`workflow_dispatch`) workflow that always
+runs the read-only drift check, then a dry run, before an optional real
+apply. Protect `main` with a branch-protection rule requiring the CI
+workflow to pass, so a broken playbook can never reach the deploy stage.
 
-The intended promotion path:
+Like CI, `deploy.yml` runs on a plain GitHub-hosted runner
+(`ubuntu-latest`) — against the same mock IOS-XE SSH server CI uses, for
+the same reason: `ansible.netcommon.cli_config` connects directly over
+SSH, and a GitHub-hosted runner has no route to a real device's private
+management IP, only to this loopback mock. That's what makes it possible
+to actually click "Run workflow" and watch a real
+`check_drift.yml -> deploy_baseline.yml` deploy happen with zero
+infrastructure — no self-hosted runner, no vault, no lab.
+
+The intended promotion path for this demo:
 
 ```
 PR opened
    -> CI (lint, syntax-check, unit tests,
       real end-to-end run against the mock IOS-XE device)
    -> merge to main
-   -> Deploy workflow, limit=network_test,  apply=false  (dry run against the lab)
-   -> Deploy workflow, limit=network_test,  apply=true   (apply to the lab)
-   -> Deploy workflow, limit=network_prod,  apply=false  (dry run against prod)
-   -> Deploy workflow, limit=network_prod,  apply=true   (apply to prod, gated by
-      the "network-production" GitHub Environment's required reviewers)
+   -> Deploy workflow, apply=false  (dry run against the mock device)
+   -> Deploy workflow, apply=true   (apply to the mock device)
 ```
+
+To deploy to *real* devices on a private network instead, see
+[Deploying to real devices](#deploying-to-real-devices) below — that
+needs a self-hosted runner, since a GitHub-hosted one cannot reach a
+private management IP no matter what.
 
 ## Setup
 
@@ -241,41 +251,89 @@ ansible-playbook playbooks/deploy_baseline.yml --diff --ask-vault-pass --limit t
 ## Running from GitHub Actions
 
 See [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying)
-above for the full flow. The deploy workflow (`.github/workflows/deploy.yml`)
-needs a self-hosted runner reachable on your management network —
-[`ci/setup-self-hosted-runner.sh`](ci/setup-self-hosted-runner.sh) installs
-prerequisites, downloads the latest `actions/runner`, registers it with
-the labels the workflow expects (`self-hosted,network,linux`), and runs
-it as a systemd service under a dedicated unprivileged `ghrunner` user:
+above for the full flow. `.github/workflows/deploy.yml` runs on a plain
+GitHub-hosted runner with no setup: go to Actions -> Deploy -> Run
+workflow. Leave `apply` unchecked for a drift check + dry run against
+the mock device (no changes), or check it to actually apply the
+baseline to it. The workflow always uploads the rendered configs and
+drift reports as a build artifact either way.
 
-```bash
-sudo ./ci/setup-self-hosted-runner.sh \
-  https://github.com/elo33011/ansible-network-baseline \
-  <registration-token> \
-  <runner-name>   # optional
-```
+## Deploying to real devices
 
-Get `<registration-token>` from this repo's Settings -> Actions ->
-Runners -> New self-hosted runner (it's short-lived, ~1 hour - copy it
-and run the script right away). See the script's own comments for the
-full setup and security notes (repo-scoped runner, `workflow_dispatch`
-only, never on `pull_request` from forks).
+Everything above targets the mock IOS-XE device so the whole pipeline —
+CI *and* deploy — works with zero infrastructure. To point this at real
+devices on a private network instead:
 
-Required repo (or environment) secrets for the deploy workflow:
+1. Edit `inventory/hosts.yml`'s `network_test`/`network_prod` groups to
+   describe your real devices, and `inventory/group_vars/all/baseline.yml`
+   to match your org's standard (see [Setup](#setup)).
 
-- `ANSIBLE_VAULT_PASSWORD` — the `ansible-vault` password.
-- `ANSIBLE_VAULT_YML_B64` — base64 of your encrypted
-  `inventory/group_vars/all/vault.yml`:
-  ```bash
-  ansible-vault encrypt inventory/group_vars/all/vault.yml   # if not already encrypted
-  base64 -w0 inventory/group_vars/all/vault.yml
-  ```
+2. Create the vaulted credentials file:
 
-For real changes, gate the `network-production` GitHub Environment with
-required reviewers (Settings -> Environments) so an `apply=true` run
-against `network_prod` needs a human approval before it touches a
-device. The workflow always uploads the rendered configs and drift
-reports as a build artifact, whether or not it applies.
+   ```bash
+   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+   ansible-vault encrypt inventory/group_vars/all/vault.yml
+   # then edit with: ansible-vault edit inventory/group_vars/all/vault.yml
+   ```
+
+3. Run locally against them with `--limit network_test`/`network_prod`
+   (see [Usage](#usage)) — this works from any machine that can already
+   reach the devices' management IPs.
+
+4. To also run this from GitHub Actions, `ansible.netcommon.cli_config`
+   still needs direct SSH reachability, which a GitHub-hosted runner does
+   not have to a private network — set up a self-hosted runner instead:
+   [`ci/setup-self-hosted-runner.sh`](ci/setup-self-hosted-runner.sh)
+   installs prerequisites, downloads the latest `actions/runner`,
+   registers it with the labels `self-hosted,network,linux`, and runs it
+   as a systemd service under a dedicated unprivileged `ghrunner` user:
+
+   ```bash
+   sudo ./ci/setup-self-hosted-runner.sh \
+     https://github.com/elo33011/ansible-network-baseline \
+     <registration-token> \
+     <runner-name>   # optional
+   ```
+
+   Get `<registration-token>` from this repo's Settings -> Actions ->
+   Runners -> New self-hosted runner (it's short-lived, ~1 hour - copy
+   it and run the script right away). See the script's own comments for
+   the full setup and security notes (repo-scoped runner,
+   `workflow_dispatch` only, never on `pull_request` from forks).
+
+5. Adapt `.github/workflows/deploy.yml` for that runner: change
+   `runs-on: ubuntu-latest` to `runs-on: [self-hosted, network]`, drop
+   the mock-server step, add a `limit` input
+   (`network_test`/`network_prod`/a hostname) in place of the hard-coded
+   `network_mock`, and add steps to write/remove the vault file from
+   secrets before/after the `ansible-playbook` steps:
+
+   ```yaml
+   - name: Write vault credentials
+     run: |
+       echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
+       echo "${{ secrets.ANSIBLE_VAULT_YML_B64 }}" | base64 -d > inventory/group_vars/all/vault.yml
+       chmod 600 .vault_pass inventory/group_vars/all/vault.yml
+   # ...add --vault-password-file .vault_pass to each ansible-playbook command...
+   - name: Remove vault credentials
+     if: always()
+     run: rm -f .vault_pass inventory/group_vars/all/vault.yml
+   ```
+
+   Required repo (or environment) secrets for that variant:
+
+   - `ANSIBLE_VAULT_PASSWORD` — the `ansible-vault` password.
+   - `ANSIBLE_VAULT_YML_B64` — base64 of your encrypted
+     `inventory/group_vars/all/vault.yml`:
+     ```bash
+     ansible-vault encrypt inventory/group_vars/all/vault.yml   # if not already encrypted
+     base64 -w0 inventory/group_vars/all/vault.yml
+     ```
+
+   For real changes, gate the `network-production` GitHub Environment
+   with required reviewers (Settings -> Environments) so an
+   `apply=true` run against `network_prod` needs a human approval
+   before it touches a device.
 
 ## Adding a new baseline setting
 

@@ -1,10 +1,14 @@
 name: Deploy
 
-# IMPORTANT: this MUST run on a self-hosted runner that has network access
-# to the devices' management IPs (ansible.netcommon.cli_config connects
-# directly over SSH). GitHub-hosted runners (ubuntu-latest) live outside
-# your network and cannot reach private management IPs, so runs-on is
-# deliberately a self-hosted label. See ci/setup-self-hosted-runner.sh.
+# Runs on a plain GitHub-hosted runner (ubuntu-latest) against the mock
+# IOS-XE SSH server (tests/mock_device/mock_ios_ssh_server.py) - the same
+# one CI's e2e-mock-device job uses. That's what makes ubuntu-latest
+# viable here at all: ansible.netcommon.cli_config connects directly over
+# SSH, and a GitHub-hosted runner has no route to a real device's private
+# management IP - only to this loopback mock. No self-hosted runner, no
+# vault, no real device needed; this demonstrates the actual
+# check_drift.yml -> deploy_baseline.yml flow as a real GitHub Actions
+# deploy, not just a CI assertion.
 #
 # This workflow is only meant to be run after "CI" (ci.yml) is green on
 # the commit being deployed - enforce that with a branch protection rule
@@ -12,18 +16,16 @@ name: Deploy
 # check first, then a dry run, and only applies for real when the "apply"
 # input is checked.
 #
-# Required repo/environment secrets:
-#   ANSIBLE_VAULT_PASSWORD   - the ansible-vault password
-#   ANSIBLE_VAULT_YML_B64    - base64 of the encrypted inventory/group_vars/all/vault.yml
-#                              (`base64 -w0 inventory/group_vars/all/vault.yml`, encrypt first)
+# To deploy to REAL devices on a private network instead of the mock,
+# this needs a self-hosted runner with SSH reachability to them - see
+# ci/setup-self-hosted-runner.sh and the "Running from GitHub Actions"
+# section of the README for the vault-backed variant of this workflow
+# (`runs-on: [self-hosted, network]`, `--limit network_test`/`network_prod`,
+# ANSIBLE_VAULT_* secrets).
 
 on:
   workflow_dispatch:
     inputs:
-      limit:
-        description: 'Ansible --limit pattern (e.g. network_test, network_prod, prod-sw01)'
-        required: true
-        default: 'network_test'
       apply:
         description: 'Apply changes (unchecked = drift check + dry run only)'
         type: boolean
@@ -31,55 +33,49 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, network]
-    # Gate real changes behind a GitHub Environment with required reviewers:
-    # Settings -> Environments -> network-production -> required reviewers.
-    environment: ${{ inputs.apply && 'network-production' || '' }}
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Install Ansible
-        run: pip install "ansible-core>=2.15,<2.20"
+      - name: Install Ansible + SSH client library
+        run: pip install "ansible-core>=2.15,<2.20" paramiko
 
       - name: Install required collections
         run: ansible-galaxy collection install -r requirements.yml
 
-      - name: Write vault credentials
-        run: |
-          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
-          echo "${{ secrets.ANSIBLE_VAULT_YML_B64 }}" | base64 -d > inventory/group_vars/all/vault.yml
-          chmod 600 .vault_pass inventory/group_vars/all/vault.yml
+      - name: Install mock device server dependencies
+        run: pip install -r tests/mock_device/requirements.txt
 
-      - name: Read-only drift check (never changes a device)
+      - name: Start the mock IOS-XE SSH server (seeded with drift)
+        run: |
+          python3 tests/mock_device/mock_ios_ssh_server.py \
+            --seed tests/mock_device/seed_running_config_drift.txt \
+            --ready-file /tmp/mock_ready &
+          for i in $(seq 1 50); do [ -s /tmp/mock_ready ] && break; sleep 0.2; done
+          test -s /tmp/mock_ready
+
+      - name: Read-only drift check (never changes the device)
         run: |
           ansible-playbook playbooks/check_drift.yml \
-            --limit "${{ inputs.limit }}" \
-            --vault-password-file .vault_pass \
+            --limit network_mock \
             -e network_baseline_fail_on_drift=false
 
       - name: Dry run (always, shows the diff that would be applied)
         run: |
           ansible-playbook playbooks/deploy_baseline.yml \
             --check --diff \
-            --limit "${{ inputs.limit }}" \
-            --vault-password-file .vault_pass
+            --limit network_mock
 
       - name: Apply
         if: ${{ inputs.apply }}
         run: |
           ansible-playbook playbooks/deploy_baseline.yml \
             --diff \
-            --limit "${{ inputs.limit }}" \
-            --vault-password-file .vault_pass
-
-      - name: Remove vault credentials
-        if: always()
-        run: rm -f .vault_pass inventory/group_vars/all/vault.yml
+            --limit network_mock
 
       - name: Upload rendered configs and reports
         if: always()
