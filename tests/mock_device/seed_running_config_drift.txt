@@ -1,0 +1,30 @@
+! Seed "show running-config" for the mock IOS-XE device used by the
+! end-to-end pipeline test (make e2e). Deliberately drifted from
+! group_vars/all/baseline.yml so the pipeline demonstrates:
+!   check_drift.yml  -> finds it
+!   deploy_baseline.yml --check --diff -> shows what would change
+!   deploy_baseline.yml           -> fixes it
+!   check_drift.yml  (again)      -> clean
+hostname mock-sw01
+!
+banner motd ^C
+***************************************************
+* Unauthorized access is prohibited.               *
+***************************************************
+^C
+!
+ntp server 10.0.0.10 prefer
+ntp source Loopback0
+!
+snmp-server community public-ro RO
+snmp-server location OLD-LOCATION
+snmp-server contact netops@example.com
+snmp-server host 10.0.0.30 version 2c trap-community
+!
+logging host 10.0.0.20
+logging trap informational
+logging facility local7
+logging buffered 16384
+logging source-interface Loopback0
+!
+end

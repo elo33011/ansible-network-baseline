@@ -1,7 +1,7 @@
 ---
 # Sample data model used only by the pytest suite (tests/test_*.py) to
 # render templates without needing Ansible, a vault, or a real device.
-# Mirrors the shape of group_vars/all/baseline.yml with plain-text
+# Mirrors the shape of inventory/group_vars/all/baseline.yml with plain-text
 # stand-ins instead of vault-encrypted values.
 baseline:
   banner:

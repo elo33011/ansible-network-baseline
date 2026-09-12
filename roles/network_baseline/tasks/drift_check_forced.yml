@@ -4,10 +4,13 @@
 # WITHOUT ever pushing anything — check_mode: true is hard-coded here so
 # this task never applies, no matter how the calling playbook was invoked.
 - name: Compare candidate configuration against running-config (read-only)
+  # ansible.netcommon.cli_config always diffs `config:` against the
+  # device's running-config (it calls connection.get_config() itself) -
+  # there is no diff_against parameter to set.
   ansible.netcommon.cli_config:
     config: "{{ network_baseline_candidate_config }}"
-    diff_against: running
   check_mode: true
+  diff: true # forces module.diff (resp["diff"]["prepared"]) so banner drift is captured below, regardless of -D/--diff
   register: network_baseline_drift_result
 
 - name: Report drift status
@@ -23,8 +26,10 @@
       Host: {{ inventory_hostname }}
       Timestamp: {{ network_baseline_run_timestamp }}
       Drift detected: {{ network_baseline_drift_result.changed }}
-      Lines that differ from the running-config:
-      {{ network_baseline_drift_result.commands | default([]) | to_nice_yaml }}
+      Lines that differ from the running-config (config_diff; banner
+      changes are reported separately by the module and appear below the
+      line list if present):
+      {{ network_baseline_drift_result.diff.prepared | default('(none)') }}
     dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt"
     mode: "0644"
   delegate_to: localhost

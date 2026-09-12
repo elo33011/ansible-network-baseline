@@ -6,13 +6,16 @@
 # true dry run (identical logic path to a real run, just simulated), and
 # a normal run applies for real.
 - name: Reconcile device configuration with the baseline (diff-only push)
+  # ansible.netcommon.cli_config always diffs `config:` against the
+  # device's running-config (it calls connection.get_config() itself) -
+  # there is no diff_against parameter to set.
   ansible.netcommon.cli_config:
     config: "{{ network_baseline_candidate_config }}"
-    diff_against: running
     backup: true
     backup_options:
       dir_path: "{{ playbook_dir }}/../reports/running-config-backup"
       filename: "{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.cfg"
+  diff: true # forces module.diff (resp["diff"]["prepared"]) so banner drift is captured below, regardless of -D/--diff
   register: network_baseline_drift_result
 
 - name: Report result
@@ -30,8 +33,10 @@
       Timestamp: {{ network_baseline_run_timestamp }}
       Mode: {{ 'check (dry run)' if ansible_check_mode else 'apply' }}
       Drift detected: {{ network_baseline_drift_result.changed }}
-      Lines pushed / that would be pushed:
-      {{ network_baseline_drift_result.commands | default([]) | to_nice_yaml }}
+      Lines pushed / that would be pushed (config_diff; banner changes
+      are reported separately by the module and appear below the line
+      list if present):
+      {{ network_baseline_drift_result.diff.prepared | default('(none)') }}
     dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt"
     mode: "0644"
   delegate_to: localhost

@@ -13,7 +13,7 @@ see [Adapting to other vendors](#adapting-to-other-vendors).
 ## How the pieces fit together
 
 ```
-group_vars/all/baseline.yml (data model, source of truth)
+inventory/group_vars/all/baseline.yml (data model, source of truth)
         |
         v
 roles/network_baseline/templates/*.j2  (banner / ntp / snmp / syslog)
@@ -28,13 +28,13 @@ compare against the device's running-config  --> drift report
 push ONLY the lines that differ               --> device
 ```
 
-- **Data model / source of truth** — `group_vars/all/baseline.yml`
+- **Data model / source of truth** — `inventory/group_vars/all/baseline.yml`
   Everything that defines the organization's baseline standard: the MOTD
   banner text, NTP servers, SNMP contact/location/communities/trap hosts,
   and syslog servers/facility/level. This is the one file people edit
   when the standard changes. Secrets referenced from it (SNMP community
   strings, device credentials) live in an `ansible-vault`-encrypted
-  `group_vars/all/vault.yml`.
+  `inventory/group_vars/all/vault.yml`.
 
 - **Network source of truth** — `inventory/hosts.yml`
   Which devices exist, how to reach them, and which environment
@@ -64,10 +64,10 @@ push ONLY the lines that differ               --> device
 
 ## Why drift is checked before every change
 
-`ansible.netcommon.cli_config`'s `diff_against: running` parameter
-compares the rendered candidate configuration against the device's
-*actual* running-config (not just "what Ansible pushed last time") and
-computes only the lines that differ. That means:
+`ansible.netcommon.cli_config` always fetches the device's *actual*
+running-config itself and diffs the rendered candidate against it (not
+just "what Ansible pushed last time"), computing only the lines that
+differ. That means:
 
 - A config change made directly on the device (console/CLI, outside
   Ansible) is caught as drift the next time the playbook runs — the
@@ -91,9 +91,10 @@ Every run also writes an audit trail:
 ## Develop and test in the pipeline before deploying
 
 This is the core workflow the repo is built around: **playbooks are
-linted, syntax-checked and unit-tested on every push/PR, using only
-GitHub-hosted runners — no lab or real device required** — before anyone
-runs the deploy workflow against actual hardware.
+linted, syntax-checked, unit-tested, and run end-to-end against a mock
+device on every push/PR, using only GitHub-hosted runners — no lab or
+real device required** — before anyone runs the deploy workflow against
+actual hardware.
 
 `.github/workflows/ansible-network-baseline-ci.yml` runs on every push
 and pull request that touches this project:
@@ -117,8 +118,38 @@ and pull request that touches this project:
    part of "tested via the pipeline" — it runs in under a second and
    needs no network access.
 
+4. **e2e-mock-device** — runs `playbooks/check_drift.yml` and
+   `playbooks/deploy_baseline.yml` for real: real SSH, real
+   `ansible.netcommon` `network_cli` connection, real `cisco.ios`
+   cliconf/terminal plugins, real `ansible.netcommon.cli_config`
+   module — against `tests/mock_device/mock_ios_ssh_server.py`, a small
+   SSH server that speaks just enough real Cisco IOS CLI (terminal
+   setup, `enable`/privilege escalation, `show running-config`,
+   `configure terminal` line pushes, and the special `banner ... @`
+   push path) to be driven exactly like a real device would be, without
+   needing a lab or a reachable device. `tests/mock_device/run_e2e.sh`
+   seeds it with a drifted config
+   (`tests/mock_device/seed_running_config_drift.txt`) and asserts the
+   full cycle: `check_drift.yml` finds the drift and exits non-zero ->
+   `deploy_baseline.yml --check --diff` reports what would change and
+   leaves the device untouched -> `deploy_baseline.yml` applies it for
+   real -> `check_drift.yml` reports clean. This is what "tested via
+   the pipeline" means for the playbooks themselves, not just their
+   templates — and it runs entirely over loopback, so it needs nothing
+   beyond a GitHub-hosted runner.
+
+   *(Why a mock device instead of Cisco's DevNet Always-On IOS-XE
+   sandbox: this repo was built in a sandboxed environment with no
+   outbound access to arbitrary hosts, so reaching that sandbox — or
+   any real device — wasn't possible from there. The mock server was
+   built by reading `cisco.ios`'s actual cliconf/terminal plugin source
+   to replicate the exact command sequence a real IOS-XE device would
+   see, so the same playbooks run unmodified against a real device or
+   Cisco's sandbox — just point `inventory/hosts.yml` at it, see
+   [Setup](#setup).)*
+
 Run the same checks locally with `make ci` (or `make lint` / `make
-syntax-check` / `make test` individually).
+syntax-check` / `make test` / `make e2e` individually).
 
 Only after that pipeline is green does
 `.github/workflows/ansible-network-baseline-deploy.yml` come into play —
@@ -132,7 +163,8 @@ The intended promotion path:
 
 ```
 PR opened
-   -> Ansible Network Baseline CI (lint, syntax-check, unit tests)
+   -> Ansible Network Baseline CI (lint, syntax-check, unit tests,
+      real end-to-end run against the mock IOS-XE device)
    -> merge to main
    -> Deploy workflow, limit=network_test,  apply=false  (dry run against the lab)
    -> Deploy workflow, limit=network_test,  apply=true   (apply to the lab)
@@ -152,14 +184,31 @@ PR opened
 2. Create the vaulted credentials file:
 
    ```bash
-   cp group_vars/all/vault.yml.example group_vars/all/vault.yml
-   ansible-vault encrypt group_vars/all/vault.yml
-   # then edit with: ansible-vault edit group_vars/all/vault.yml
+   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+   ansible-vault encrypt inventory/group_vars/all/vault.yml
+   # then edit with: ansible-vault edit inventory/group_vars/all/vault.yml
    ```
 
 3. Edit `inventory/hosts.yml` to describe your real devices (grouped
    under `network_test` / `network_prod`), and
-   `group_vars/all/baseline.yml` to match your org's standard.
+   `inventory/group_vars/all/baseline.yml` to match your org's standard.
+
+To try the playbooks against something reachable before you have real
+devices wired up, either:
+
+- `make e2e` — runs the full drift -> dry-run -> apply -> clean cycle
+  against the local mock IOS-XE SSH server (see
+  [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying)),
+  or start it yourself with
+  `python3 tests/mock_device/mock_ios_ssh_server.py --seed tests/mock_device/seed_running_config_drift.txt`
+  and run any command from [Usage](#usage) below with `--limit
+  network_mock` (no vault needed — its connection vars are inline in
+  `inventory/hosts.yml`'s `network_mock` group); or
+- point a host in `inventory/hosts.yml` at a real reachable device,
+  e.g. Cisco's DevNet Always-On IOS-XE sandbox
+  (`sandbox-iosxe-latest-1.cisco.com`) if your network allows outbound
+  access to it — the playbooks are unmodified either way, only
+  `ansible_host`/credentials differ.
 
 ## Usage
 
@@ -204,10 +253,10 @@ Required repo (or environment) secrets for the deploy workflow:
 
 - `ANSIBLE_VAULT_PASSWORD` — the `ansible-vault` password.
 - `ANSIBLE_VAULT_YML_B64` — base64 of your encrypted
-  `group_vars/all/vault.yml`:
+  `inventory/group_vars/all/vault.yml`:
   ```bash
-  ansible-vault encrypt group_vars/all/vault.yml   # if not already encrypted
-  base64 -w0 group_vars/all/vault.yml
+  ansible-vault encrypt inventory/group_vars/all/vault.yml   # if not already encrypted
+  base64 -w0 inventory/group_vars/all/vault.yml
   ```
 
 For real changes, gate the `network-production` GitHub Environment with
@@ -218,7 +267,7 @@ reports as a build artifact, whether or not it applies.
 
 ## Adding a new baseline setting
 
-1. Add the value(s) to `group_vars/all/baseline.yml` under `baseline:`.
+1. Add the value(s) to `inventory/group_vars/all/baseline.yml` under `baseline:`.
 2. Add (or extend) the relevant template in
    `roles/network_baseline/templates/` and `{% include %}` it from
    `baseline_config.j2` if it's new.
@@ -254,7 +303,7 @@ NX-OS, etc.:
 
 ## Notes
 
-- `group_vars/all/vault.yml` and everything under `reports/` is
+- `inventory/group_vars/all/vault.yml` and everything under `reports/` is
   git-ignored — never commit real credentials or device configs with
   live IPs/secrets in plaintext.
 - `playbooks/check_drift.yml` never changes a device no matter what

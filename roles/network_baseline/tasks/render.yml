@@ -1,5 +1,5 @@
 ---
-# Renders the baseline data model (group_vars/all/baseline.yml) through the
+# Renders the baseline data model (inventory/group_vars/all/baseline.yml) through the
 # Jinja2 templates into the full candidate configuration for this device,
 # and saves it for audit regardless of what happens next.
 - name: Render baseline candidate configuration from the data model
