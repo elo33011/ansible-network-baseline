@@ -1,0 +1,92 @@
+name: Deploy
+
+# IMPORTANT: this MUST run on a self-hosted runner that has network access
+# to the devices' management IPs (ansible.netcommon.cli_config connects
+# directly over SSH). GitHub-hosted runners (ubuntu-latest) live outside
+# your network and cannot reach private management IPs, so runs-on is
+# deliberately a self-hosted label. See ci/setup-self-hosted-runner.sh.
+#
+# This workflow is only meant to be run after "CI" (ci.yml) is green on
+# the commit being deployed - enforce that with a branch protection rule
+# requiring that check on `main`. It always runs the read-only drift
+# check first, then a dry run, and only applies for real when the "apply"
+# input is checked.
+#
+# Required repo/environment secrets:
+#   ANSIBLE_VAULT_PASSWORD   - the ansible-vault password
+#   ANSIBLE_VAULT_YML_B64    - base64 of the encrypted inventory/group_vars/all/vault.yml
+#                              (`base64 -w0 inventory/group_vars/all/vault.yml`, encrypt first)
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Ansible --limit pattern (e.g. network_test, network_prod, prod-sw01)'
+        required: true
+        default: 'network_test'
+      apply:
+        description: 'Apply changes (unchecked = drift check + dry run only)'
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, network]
+    # Gate real changes behind a GitHub Environment with required reviewers:
+    # Settings -> Environments -> network-production -> required reviewers.
+    environment: ${{ inputs.apply && 'network-production' || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: pip install "ansible-core>=2.15,<2.20"
+
+      - name: Install required collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Write vault credentials
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
+          echo "${{ secrets.ANSIBLE_VAULT_YML_B64 }}" | base64 -d > inventory/group_vars/all/vault.yml
+          chmod 600 .vault_pass inventory/group_vars/all/vault.yml
+
+      - name: Read-only drift check (never changes a device)
+        run: |
+          ansible-playbook playbooks/check_drift.yml \
+            --limit "${{ inputs.limit }}" \
+            --vault-password-file .vault_pass \
+            -e network_baseline_fail_on_drift=false
+
+      - name: Dry run (always, shows the diff that would be applied)
+        run: |
+          ansible-playbook playbooks/deploy_baseline.yml \
+            --check --diff \
+            --limit "${{ inputs.limit }}" \
+            --vault-password-file .vault_pass
+
+      - name: Apply
+        if: ${{ inputs.apply }}
+        run: |
+          ansible-playbook playbooks/deploy_baseline.yml \
+            --diff \
+            --limit "${{ inputs.limit }}" \
+            --vault-password-file .vault_pass
+
+      - name: Remove vault credentials
+        if: always()
+        run: rm -f .vault_pass inventory/group_vars/all/vault.yml
+
+      - name: Upload rendered configs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-baseline-reports-${{ github.run_id }}
+          path: |
+            reports/rendered/
+            reports/drift/
+          if-no-files-found: ignore

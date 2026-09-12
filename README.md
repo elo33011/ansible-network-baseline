@@ -96,7 +96,7 @@ device on every push/PR, using only GitHub-hosted runners — no lab or
 real device required** — before anyone runs the deploy workflow against
 actual hardware.
 
-`.github/workflows/ansible-network-baseline-ci.yml` runs on every push
+`.github/workflows/ci.yml` runs on every push
 and pull request that touches this project:
 
 1. **lint** — `yamllint` + `ansible-lint` (currently passes at the
@@ -152,7 +152,7 @@ Run the same checks locally with `make ci` (or `make lint` / `make
 syntax-check` / `make test` / `make e2e` individually).
 
 Only after that pipeline is green does
-`.github/workflows/ansible-network-baseline-deploy.yml` come into play —
+`.github/workflows/deploy.yml` come into play —
 a separate, manually-triggered (`workflow_dispatch`) workflow that runs
 on a self-hosted runner with real network access, and always runs the
 read-only drift check, then a dry run, before an optional real apply.
@@ -163,7 +163,7 @@ The intended promotion path:
 
 ```
 PR opened
-   -> Ansible Network Baseline CI (lint, syntax-check, unit tests,
+   -> CI (lint, syntax-check, unit tests,
       real end-to-end run against the mock IOS-XE device)
    -> merge to main
    -> Deploy workflow, limit=network_test,  apply=false  (dry run against the lab)
@@ -241,13 +241,25 @@ ansible-playbook playbooks/deploy_baseline.yml --diff --ask-vault-pass --limit t
 ## Running from GitHub Actions
 
 See [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying)
-above for the full flow. The deploy workflow needs a self-hosted runner
-reachable on your management network — this repo shares the same
-`[self-hosted, network]` runner labels as `ansible-network-config-deployer`
-in this monorepo, so if you've already set one up via
-[`ansible-network-config-deployer/ci/setup-self-hosted-runner.sh`](../ansible-network-config-deployer/ci/setup-self-hosted-runner.sh),
-it will pick up this workflow too. Otherwise follow that script's setup
-instructions.
+above for the full flow. The deploy workflow (`.github/workflows/deploy.yml`)
+needs a self-hosted runner reachable on your management network —
+[`ci/setup-self-hosted-runner.sh`](ci/setup-self-hosted-runner.sh) installs
+prerequisites, downloads the latest `actions/runner`, registers it with
+the labels the workflow expects (`self-hosted,network,linux`), and runs
+it as a systemd service under a dedicated unprivileged `ghrunner` user:
+
+```bash
+sudo ./ci/setup-self-hosted-runner.sh \
+  https://github.com/elo33011/ansible-network-baseline \
+  <registration-token> \
+  <runner-name>   # optional
+```
+
+Get `<registration-token>` from this repo's Settings -> Actions ->
+Runners -> New self-hosted runner (it's short-lived, ~1 hour - copy it
+and run the script right away). See the script's own comments for the
+full setup and security notes (repo-scoped runner, `workflow_dispatch`
+only, never on `pull_request` from forks).
 
 Required repo (or environment) secrets for the deploy workflow:
 
