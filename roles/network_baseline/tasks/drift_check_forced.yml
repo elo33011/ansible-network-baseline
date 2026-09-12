@@ -1,0 +1,41 @@
+---
+# Read-only drift check: compares the rendered candidate configuration
+# against the device's running-config and reports what would change,
+# WITHOUT ever pushing anything — check_mode: true is hard-coded here so
+# this task never applies, no matter how the calling playbook was invoked.
+- name: Compare candidate configuration against running-config (read-only)
+  ansible.netcommon.cli_config:
+    config: "{{ network_baseline_candidate_config }}"
+    diff_against: running
+  check_mode: true
+  register: network_baseline_drift_result
+
+- name: Report drift status
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ (network_baseline_drift_result.commands | default([]) | length | string) ~ ' line(s) out of baseline'
+         if network_baseline_drift_result.changed else 'no drift - matches baseline' }}
+
+- name: Save drift report
+  ansible.builtin.copy:
+    content: |
+      Host: {{ inventory_hostname }}
+      Timestamp: {{ network_baseline_run_timestamp }}
+      Drift detected: {{ network_baseline_drift_result.changed }}
+      Lines that differ from the running-config:
+      {{ network_baseline_drift_result.commands | default([]) | to_nice_yaml }}
+    dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Fail the check if drift was found (informational gate for CI/CD)
+  ansible.builtin.fail:
+    msg: >-
+      Baseline drift detected on {{ inventory_hostname }} -
+      see reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt.
+      This does not block a manual review; set network_baseline_fail_on_drift=false
+      to only warn.
+  when:
+    - network_baseline_drift_result.changed
+    - network_baseline_fail_on_drift | default(true) | bool

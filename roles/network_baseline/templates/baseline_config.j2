@@ -1,0 +1,19 @@
+! ============================================================
+! Managed by Ansible - baseline config only. DO NOT EDIT MANUALLY.
+! Device   : {{ inventory_hostname }}
+! Rendered : {{ run_timestamp | default('n/a') }}
+! Source   : group_vars/all/baseline.yml
+! ============================================================
+!
+! --- banner ---
+{% include 'banner.j2' %}
+!
+! --- ntp ---
+{% include 'ntp.j2' %}
+!
+! --- snmp ---
+{% include 'snmp.j2' %}
+!
+! --- syslog ---
+{% include 'syslog.j2' %}
+!

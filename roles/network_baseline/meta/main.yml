@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: network_baseline
+  author: netops
+  description: Render and reconcile common baseline config (banner, NTP, SNMP, syslog) from a YAML data model.
+  license: MIT
+  min_ansible_version: "2.15"
+
+dependencies: []

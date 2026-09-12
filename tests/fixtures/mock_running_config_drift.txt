@@ -1,0 +1,29 @@
+! Simulated "show running-config" snippet for a device that has drifted
+! from the baseline data model (tests/fixtures/sample_baseline.yml):
+!   - missing the second NTP server (10.0.0.11)
+!   - SNMP location is stale ("OLD-LOCATION" instead of "HQ-DC1")
+!   - missing one syslog host (10.0.0.21)
+! Everything else matches the baseline exactly.
+hostname test-sw01
+!
+banner motd ^C
+***************************************************
+* Authorized access only. All activity is logged. *
+***************************************************
+^C
+!
+ntp server 10.0.0.10 prefer
+ntp source Loopback0
+!
+snmp-server community public-ro RO
+snmp-server location OLD-LOCATION
+snmp-server contact netops@example.com
+snmp-server host 10.0.0.30 version 2c trap-community
+!
+logging host 10.0.0.20
+logging trap informational
+logging facility local7
+logging buffered 16384
+logging source-interface Loopback0
+!
+end

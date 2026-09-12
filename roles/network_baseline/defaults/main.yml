@@ -1,0 +1,5 @@
+---
+# Safe default: never push changes unless a playbook explicitly opts into
+# "deploy" mode. check_drift.yml always forces check-only regardless of
+# this value.
+network_baseline_mode: check

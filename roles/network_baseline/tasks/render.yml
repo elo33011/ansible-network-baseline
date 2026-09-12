@@ -1,0 +1,14 @@
+---
+# Renders the baseline data model (group_vars/all/baseline.yml) through the
+# Jinja2 templates into the full candidate configuration for this device,
+# and saves it for audit regardless of what happens next.
+- name: Render baseline candidate configuration from the data model
+  ansible.builtin.set_fact:
+    network_baseline_candidate_config: "{{ lookup('ansible.builtin.template', role_path ~ '/templates/baseline_config.j2') }}"
+
+- name: Save rendered candidate configuration for audit
+  ansible.builtin.copy:
+    content: "{{ network_baseline_candidate_config }}"
+    dest: "{{ playbook_dir }}/../reports/rendered/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.cfg"
+    mode: "0644"
+  delegate_to: localhost

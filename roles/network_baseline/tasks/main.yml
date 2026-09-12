@@ -1,0 +1,15 @@
+---
+- name: Determine timestamp for this run (once per play, shared across hosts)
+  ansible.builtin.set_fact:
+    network_baseline_run_timestamp: "{{ network_baseline_run_timestamp | default(lookup('pipe', 'date +%Y%m%d_%H%M%S')) }}"
+
+- name: Render candidate configuration from the data model
+  ansible.builtin.import_tasks: render.yml
+
+- name: Read-only baseline drift check
+  ansible.builtin.import_tasks: drift_check_forced.yml
+  when: network_baseline_mode == 'check'
+
+- name: Deploy baseline configuration (respects --check for dry run)
+  ansible.builtin.import_tasks: apply.yml
+  when: network_baseline_mode == 'deploy'

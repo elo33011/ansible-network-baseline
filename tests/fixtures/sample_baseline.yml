@@ -1,0 +1,39 @@
+---
+# Sample data model used only by the pytest suite (tests/test_*.py) to
+# render templates without needing Ansible, a vault, or a real device.
+# Mirrors the shape of group_vars/all/baseline.yml with plain-text
+# stand-ins instead of vault-encrypted values.
+baseline:
+  banner:
+    motd: |
+      ***************************************************
+      * Authorized access only. All activity is logged. *
+      ***************************************************
+
+  ntp:
+    source_interface: Loopback0
+    servers:
+      - address: 10.0.0.10
+        prefer: true
+      - address: 10.0.0.11
+        prefer: false
+
+  snmp:
+    contact: "netops@example.com"
+    location: "HQ-DC1"
+    communities:
+      - name: "public-ro"
+        access: ro
+    hosts:
+      - address: 10.0.0.30
+        version: "2c"
+        community: "trap-community"
+
+  syslog:
+    source_interface: Loopback0
+    facility: local7
+    trap_level: informational
+    buffer_size: 16384
+    servers:
+      - 10.0.0.20
+      - 10.0.0.21

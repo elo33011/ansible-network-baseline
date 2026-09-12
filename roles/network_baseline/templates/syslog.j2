@@ -1,0 +1,9 @@
+{% for server in baseline.syslog.servers %}
+logging host {{ server }}
+{% endfor %}
+logging trap {{ baseline.syslog.trap_level }}
+logging facility {{ baseline.syslog.facility }}
+logging buffered {{ baseline.syslog.buffer_size }}
+{% if baseline.syslog.source_interface is defined %}
+logging source-interface {{ baseline.syslog.source_interface }}
+{% endif %}

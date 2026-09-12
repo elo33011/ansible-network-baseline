@@ -1,0 +1,13 @@
+---
+# Copy this file to vault.yml and encrypt it, then fill in real values:
+#
+#   cp group_vars/all/vault.yml.example group_vars/all/vault.yml
+#   ansible-vault encrypt group_vars/all/vault.yml
+#   ansible-vault edit group_vars/all/vault.yml
+#
+# group_vars/all/vault.yml is git-ignored — never commit real secrets.
+vault_ansible_user: netops
+vault_ansible_password: CHANGE_ME
+vault_ansible_become_password: CHANGE_ME
+vault_snmp_ro_community: CHANGE_ME_RO_COMMUNITY
+vault_snmp_trap_community: CHANGE_ME_TRAP_COMMUNITY

@@ -1,0 +1,43 @@
+---
+# ============================================================================
+# Baseline configuration data model — the single source of truth for the
+# settings every device in "network_baseline_devices" must comply with:
+# banner, NTP, SNMP and syslog. This file is what changes when the
+# organization's standard changes; templates/tasks never hard-code values.
+# ============================================================================
+baseline:
+  banner:
+    motd: |
+      ***************************************************
+      * Authorized access only. All activity is logged. *
+      * Disconnect immediately if you are not an        *
+      * authorized user.                                *
+      ***************************************************
+
+  ntp:
+    source_interface: Loopback0
+    servers:
+      - address: 10.0.0.10
+        prefer: true
+      - address: 10.0.0.11
+        prefer: false
+
+  snmp:
+    contact: "netops@example.com"
+    location: "HQ-DC1"
+    communities:
+      - name: "{{ vault_snmp_ro_community }}"
+        access: ro
+    hosts:
+      - address: 10.0.0.30
+        version: "2c"
+        community: "{{ vault_snmp_trap_community }}"
+
+  syslog:
+    source_interface: Loopback0
+    facility: local7
+    trap_level: informational
+    buffer_size: 16384
+    servers:
+      - 10.0.0.20
+      - 10.0.0.21

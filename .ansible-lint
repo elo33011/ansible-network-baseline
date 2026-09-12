@@ -1,0 +1,9 @@
+---
+exclude_paths:
+  - reports/
+  - tests/
+  - .github/
+
+skip_list:
+  # Uses jinja2 templating in defaults/vars intentionally (vault refs).
+  - jinja[spacing]

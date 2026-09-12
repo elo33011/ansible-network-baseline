@@ -1,0 +1,15 @@
+# Secrets - never commit the real vault file
+group_vars/all/vault.yml
+
+# Generated at runtime - rendered configs, drift reports, running-config backups
+reports/rendered/*
+reports/drift/*
+reports/running-config-backup/*
+!reports/rendered/.gitkeep
+!reports/drift/.gitkeep
+!reports/running-config-backup/.gitkeep
+
+*.retry
+__pycache__/
+*.pyc
+.pytest_cache/

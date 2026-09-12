@@ -1,0 +1,44 @@
+---
+# Pushes only the lines that differ from the running-config (diff-based,
+# idempotent). No check_mode attribute is set here on purpose: this task
+# inherits whatever mode the play was invoked with, so
+# `ansible-playbook playbooks/deploy_baseline.yml --check --diff` is a
+# true dry run (identical logic path to a real run, just simulated), and
+# a normal run applies for real.
+- name: Reconcile device configuration with the baseline (diff-only push)
+  ansible.netcommon.cli_config:
+    config: "{{ network_baseline_candidate_config }}"
+    diff_against: running
+    backup: true
+    backup_options:
+      dir_path: "{{ playbook_dir }}/../reports/running-config-backup"
+      filename: "{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.cfg"
+  register: network_baseline_drift_result
+
+- name: Report result
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ 'would change ' if ansible_check_mode else 'changed ' }}
+      {{ network_baseline_drift_result.commands | default([]) | length }} line(s)
+      {{ 'nothing to change - already matches baseline' if not network_baseline_drift_result.changed else '' }}
+
+- name: Save change report
+  ansible.builtin.copy:
+    content: |
+      Host: {{ inventory_hostname }}
+      Timestamp: {{ network_baseline_run_timestamp }}
+      Mode: {{ 'check (dry run)' if ansible_check_mode else 'apply' }}
+      Drift detected: {{ network_baseline_drift_result.changed }}
+      Lines pushed / that would be pushed:
+      {{ network_baseline_drift_result.commands | default([]) | to_nice_yaml }}
+    dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Save running-config to startup-config after a real change
+  ansible.netcommon.cli_command:
+    command: write memory
+  when:
+    - network_baseline_drift_result.changed
+    - not ansible_check_mode
