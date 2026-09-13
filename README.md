@@ -16,8 +16,8 @@ see [Adapting to other vendors](#adapting-to-other-vendors).
 inventory/group_vars/all/baseline.yml (data model, source of truth)
         |
         v
-roles/network_baseline/templates/*.j2  (banner / ntp / snmp / syslog)
-        |
+roles/network_baseline/tasks/render.yml  (Jinja2 embedded in the tasks:
+        |                                 banner / ntp / snmp / syslog)
         v
 candidate config (rendered per device)
         |
@@ -40,11 +40,16 @@ push ONLY the lines that differ               --> device
   Which devices exist, how to reach them, and which environment
   (`network_test` vs `network_prod`) each belongs to.
 
-- **Jinja2 templates** — `roles/network_baseline/templates/`
-  One template per baseline domain (`banner.j2`, `ntp.j2`, `snmp.j2`,
-  `syslog.j2`), combined by `baseline_config.j2` into the full candidate
-  configuration. Splitting them keeps each concern independently
-  readable and testable.
+- **Jinja2, embedded in the tasks** — `roles/network_baseline/tasks/render.yml`
+  There are no standalone `.j2` template files. Each baseline domain
+  (banner, NTP, SNMP, syslog) is its own `set_fact` task whose value is a
+  literal Jinja2 block (loops, `{% if %}`s and all) that Ansible renders
+  the same way it would a template file — the four blocks are then
+  combined into the full candidate config by one more `set_fact`. This
+  is deliberate: the Jinja2 only exists inside real Ansible tasks, so
+  proving it renders correctly means actually running the playbook with
+  Ansible (see [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying)),
+  not rendering a template file in isolation.
 
 - **Role** — `roles/network_baseline/`
   `tasks/render.yml` renders the candidate config from the data model.
@@ -91,10 +96,10 @@ Every run also writes an audit trail:
 ## Develop and test in the pipeline before deploying
 
 This is the core workflow the repo is built around: **playbooks are
-linted, syntax-checked, unit-tested, and run end-to-end against a mock
-device on every push/PR, using only GitHub-hosted runners — no lab or
-real device required** — before anyone runs the deploy workflow against
-actual hardware.
+linted, syntax-checked, and run end-to-end against a mock device on
+every push/PR, using only GitHub-hosted runners — no lab or real device
+required** — before anyone runs the deploy workflow against actual
+hardware.
 
 `.github/workflows/ci.yml` runs on every push
 and pull request that touches this project:
@@ -104,21 +109,7 @@ and pull request that touches this project:
 2. **syntax-check** — `ansible-playbook --syntax-check` on both
    playbooks, with the real collections installed, catching bad task
    structure, undefined module names, etc.
-3. **unit-test-templates** — `pytest` renders the actual Jinja2 templates
-   in `roles/network_baseline/templates/` with sample data
-   (`tests/fixtures/sample_baseline.yml`) using plain Jinja2 (no Ansible,
-   no device) and asserts the generated config lines are correct — see
-   `tests/test_templates.py`. A second suite,
-   `tests/test_drift_detection.py`, renders the same candidate config and
-   diffs it against fixture "running-config" snippets
-   (`tests/fixtures/mock_running_config_drift.txt` and
-   `..._clean.txt`) to prove the drift-detection *logic* correctly finds
-   exactly the lines that were changed underneath it, and finds nothing
-   when the device already matches baseline. This is the fast, reliable
-   part of "tested via the pipeline" — it runs in under a second and
-   needs no network access.
-
-4. **e2e-mock-device** — runs `playbooks/check_drift.yml` and
+3. **e2e-mock-device** — runs `playbooks/check_drift.yml` and
    `playbooks/deploy_baseline.yml` for real: real SSH, real
    `ansible.netcommon` `network_cli` connection, real `cisco.ios`
    cliconf/terminal plugins, real `ansible.netcommon.cli_config`
@@ -133,10 +124,13 @@ and pull request that touches this project:
    full cycle: `check_drift.yml` finds the drift and exits non-zero ->
    `deploy_baseline.yml --check --diff` reports what would change and
    leaves the device untouched -> `deploy_baseline.yml` applies it for
-   real -> `check_drift.yml` reports clean. This is what "tested via
-   the pipeline" means for the playbooks themselves, not just their
-   templates — and it runs entirely over loopback, so it needs nothing
-   beyond a GitHub-hosted runner.
+   real -> `check_drift.yml` reports clean. This is the *only* test
+   layer in this repo — there's no separate fast/no-Ansible unit-test
+   step, because the Jinja2 that renders the config lives inside the
+   tasks themselves (see [How the pieces fit together](#how-the-pieces-fit-together)),
+   so there's nothing template-shaped left to test in isolation from
+   Ansible. It runs entirely over loopback, so it needs nothing beyond
+   a GitHub-hosted runner.
 
    *(Why a mock device instead of Cisco's DevNet Always-On IOS-XE
    sandbox: this repo was built in a sandboxed environment with no
@@ -338,21 +332,23 @@ devices on a private network instead:
 ## Adding a new baseline setting
 
 1. Add the value(s) to `inventory/group_vars/all/baseline.yml` under `baseline:`.
-2. Add (or extend) the relevant template in
-   `roles/network_baseline/templates/` and `{% include %}` it from
-   `baseline_config.j2` if it's new.
-3. Add a case to `tests/test_templates.py` asserting the new line(s)
-   render correctly, and to `tests/fixtures/mock_running_config_*.txt`
-   / `tests/test_drift_detection.py` if you want drift-detection
-   coverage for it.
-4. Push — the CI pipeline lints, syntax-checks and tests it before it's
-   usable for a real deploy.
+2. Add (or extend) the relevant `set_fact` block in
+   `roles/network_baseline/tasks/render.yml` (there's one per domain:
+   banner/ntp/snmp/syslog), and reference it from the "Combine blocks"
+   task if it's a new domain.
+3. If you want it covered by the mock-device test, add the expected
+   line(s) to `tests/mock_device/seed_running_config_drift.txt` (as
+   drift, i.e. the *old* value) so `tests/mock_device/run_e2e.sh`
+   exercises it.
+4. Push — the CI pipeline lints, syntax-checks, and actually runs the
+   playbooks end-to-end against the mock device before it's usable for
+   a real deploy.
 
 ## Adding a new device
 
 Add a host entry under `network_test` or `network_prod` in
-`inventory/hosts.yml` — no template, role, or playbook changes needed;
-the baseline applies uniformly to every device in
+`inventory/hosts.yml` — no task or playbook changes needed; the
+baseline applies uniformly to every device in
 `network_baseline_devices`.
 
 ## Adapting to other vendors
@@ -365,11 +361,12 @@ NX-OS, etc.:
    `cisco.nxos`).
 2. Set `ansible_network_os` in `inventory/hosts.yml` accordingly (e.g.
    `arista.eos.eos`).
-3. Adjust the command syntax in `roles/network_baseline/templates/*.j2`
-   to match that vendor's CLI, and swap `write memory` in
-   `roles/network_baseline/tasks/apply.yml` for the equivalent save
-   command (e.g. `copy running-config startup-config` with a
-   `check_all`/prompt on IOS-XE, or `write` on EOS).
+3. Adjust the command syntax in the Jinja2 blocks in
+   `roles/network_baseline/tasks/render.yml` to match that vendor's CLI,
+   and swap `write memory` in `roles/network_baseline/tasks/apply.yml`
+   for the equivalent save command (e.g. `copy running-config
+   startup-config` with a `check_all`/prompt on IOS-XE, or `write` on
+   EOS).
 
 ## Notes
 
@@ -380,10 +377,9 @@ NX-OS, etc.:
   flags it's run with (`check_mode: true` is hard-coded in
   `roles/network_baseline/tasks/drift_check_forced.yml`); only
   `playbooks/deploy_baseline.yml`, run without `--check`, does.
-- The CI pipeline's unit tests (`tests/test_templates.py`,
-  `tests/test_drift_detection.py`) intentionally don't require Ansible
-  or a real device to run — they test the data-model-to-config and
-  drift-detection *logic* directly so they're fast and reliable on every
-  push. Testing the full playbooks against a real (or lab) device is
-  what `check_drift.yml` / `deploy_baseline.yml --check` against
-  `network_test` are for.
+- There's no standalone Jinja2 template file and no separate
+  no-Ansible unit-test layer for it — the config-rendering logic lives
+  entirely inside `roles/network_baseline/tasks/render.yml`, so the
+  `e2e-mock-device` CI job (real `ansible-playbook`, real SSH, against
+  the mock device) is the only thing that proves it renders and deploys
+  correctly. See [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying).

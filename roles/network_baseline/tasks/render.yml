@@ -1,10 +1,74 @@
 ---
-# Renders the baseline data model (inventory/group_vars/all/baseline.yml) through the
-# Jinja2 templates into the full candidate configuration for this device,
-# and saves it for audit regardless of what happens next.
-- name: Render baseline candidate configuration from the data model
+# Renders the baseline data model (inventory/group_vars/all/baseline.yml)
+# into the candidate configuration using Jinja2 embedded directly in
+# these tasks (no separate .j2 template files) - one set_fact per
+# baseline domain (banner/ntp/snmp/syslog), combined into the full
+# candidate config, then saved for audit regardless of what happens next.
+- name: Render banner block from the data model
   ansible.builtin.set_fact:
-    network_baseline_candidate_config: "{{ lookup('ansible.builtin.template', role_path ~ '/templates/baseline_config.j2') }}"
+    network_baseline_banner_block: |
+      banner motd ^C
+      {{ baseline.banner.motd }}
+      ^C
+
+- name: Render NTP block from the data model
+  ansible.builtin.set_fact:
+    network_baseline_ntp_block: |
+      {% for server in baseline.ntp.servers %}
+      ntp server {{ server.address }}{% if server.prefer %} prefer{% endif %}
+
+      {% endfor -%}
+      {% if baseline.ntp.source_interface is defined %}
+      ntp source {{ baseline.ntp.source_interface }}
+      {% endif %}
+
+- name: Render SNMP block from the data model
+  ansible.builtin.set_fact:
+    network_baseline_snmp_block: |
+      {% for community in baseline.snmp.communities %}
+      snmp-server community {{ community.name }} {{ community.access | upper }}
+      {% endfor %}
+      snmp-server location {{ baseline.snmp.location }}
+      snmp-server contact {{ baseline.snmp.contact }}
+      {% for host in baseline.snmp.hosts %}
+      snmp-server host {{ host.address }} version {{ host.version }} {{ host.community }}
+      {% endfor %}
+
+- name: Render syslog block from the data model
+  ansible.builtin.set_fact:
+    network_baseline_syslog_block: |
+      {% for server in baseline.syslog.servers %}
+      logging host {{ server }}
+      {% endfor %}
+      logging trap {{ baseline.syslog.trap_level }}
+      logging facility {{ baseline.syslog.facility }}
+      logging buffered {{ baseline.syslog.buffer_size }}
+      {% if baseline.syslog.source_interface is defined %}
+      logging source-interface {{ baseline.syslog.source_interface }}
+      {% endif %}
+
+- name: Combine blocks into the full candidate configuration
+  ansible.builtin.set_fact:
+    network_baseline_candidate_config: |
+      ! ============================================================
+      ! Managed by Ansible - baseline config only. DO NOT EDIT MANUALLY.
+      ! Device   : {{ inventory_hostname }}
+      ! Rendered : {{ network_baseline_run_timestamp | default('n/a') }}
+      ! Source   : inventory/group_vars/all/baseline.yml
+      ! ============================================================
+      !
+      ! --- banner ---
+      {{ network_baseline_banner_block }}
+      !
+      ! --- ntp ---
+      {{ network_baseline_ntp_block }}
+      !
+      ! --- snmp ---
+      {{ network_baseline_snmp_block }}
+      !
+      ! --- syslog ---
+      {{ network_baseline_syslog_block }}
+      !
 
 - name: Save rendered candidate configuration for audit
   ansible.builtin.copy:

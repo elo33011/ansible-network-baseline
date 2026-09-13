@@ -1,7 +1,0 @@
-{% for server in baseline.ntp.servers %}
-ntp server {{ server.address }}{% if server.prefer %} prefer{% endif %}
-
-{% endfor -%}
-{% if baseline.ntp.source_interface is defined %}
-ntp source {{ baseline.ntp.source_interface }}
-{% endif %}

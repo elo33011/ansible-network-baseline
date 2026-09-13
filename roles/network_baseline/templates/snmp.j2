@@ -1,8 +1,0 @@
-{% for community in baseline.snmp.communities %}
-snmp-server community {{ community.name }} {{ community.access | upper }}
-{% endfor %}
-snmp-server location {{ baseline.snmp.location }}
-snmp-server contact {{ baseline.snmp.contact }}
-{% for host in baseline.snmp.hosts %}
-snmp-server host {{ host.address }} version {{ host.version }} {{ host.community }}
-{% endfor %}
