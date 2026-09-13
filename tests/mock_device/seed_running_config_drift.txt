@@ -1,10 +1,12 @@
 ! Seed "show running-config" for the mock IOS-XE device used by the
 ! end-to-end pipeline test (make e2e). Deliberately drifted from
-! group_vars/all/baseline.yml so the pipeline demonstrates:
-!   check_drift.yml  -> finds it
-!   deploy_baseline.yml --check --diff -> shows what would change
-!   deploy_baseline.yml           -> fixes it
-!   check_drift.yml  (again)      -> clean
+! inventory/group_vars/all/baseline.yml so the 5-stage pipeline
+! demonstrates:
+!   precheck.yml  -> finds it, fails (blocking gate)
+!   dry_run.yml   -> shows what would change, device untouched
+!   deploy.yml    -> fixes it
+!   validate.yml  -> confirms clean
+!   postcheck.yml -> confirms clean, records the audit snapshot
 hostname mock-sw01
 !
 banner motd ^C

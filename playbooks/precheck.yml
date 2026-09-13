@@ -1,0 +1,18 @@
+---
+# Pipeline stage 1/5 - PRECHECK: read-only. Confirms the device is
+# reachable and reports whether it currently complies with the baseline,
+# BEFORE any change is attempted. Fails (non-zero exit) if drift is
+# found, so it gates the rest of the pipeline.
+#
+#   ansible-playbook playbooks/precheck.yml --limit network_test
+#
+# To investigate drift without blocking (informational only):
+#   ansible-playbook playbooks/precheck.yml --limit network_test \
+#     -e network_baseline_fail_on_drift=false
+- name: "Pipeline stage 1/5: precheck baseline compliance"
+  hosts: network_baseline_devices
+  gather_facts: false
+  vars:
+    network_baseline_stage: precheck
+  roles:
+    - network_baseline

@@ -1,13 +1,16 @@
 # Secrets - never commit the real vault file
 inventory/group_vars/all/vault.yml
 
-# Generated at runtime - rendered configs, drift reports, running-config backups
+# Generated at runtime - rendered configs, drift reports, running-config
+# backups, and post-deploy audit snapshots
 reports/rendered/*
 reports/drift/*
 reports/running-config-backup/*
+reports/postcheck/*
 !reports/rendered/.gitkeep
 !reports/drift/.gitkeep
 !reports/running-config-backup/.gitkeep
+!reports/postcheck/.gitkeep
 
 *.retry
 __pycache__/

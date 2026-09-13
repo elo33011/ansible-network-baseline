@@ -1,0 +1,14 @@
+---
+# Pipeline stage 4/5 - VALIDATE: read-only. Re-checks the device
+# immediately after deploy.yml and fails if ANY drift remains - the
+# signal that the deployment actually took effect, not just that the
+# push command completed without error.
+#
+#   ansible-playbook playbooks/validate.yml --limit network_test
+- name: "Pipeline stage 4/5: validate the device matches baseline"
+  hosts: network_baseline_devices
+  gather_facts: false
+  vars:
+    network_baseline_stage: validate
+  roles:
+    - network_baseline

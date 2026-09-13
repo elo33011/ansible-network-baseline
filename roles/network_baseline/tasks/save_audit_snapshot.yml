@@ -1,0 +1,22 @@
+---
+# Postcheck-only: captures a permanent "as-deployed" audit snapshot -
+# the device's running-config fetched fresh, plus the pass/fail result
+# from check_only.yml (which already ran earlier in main.yml for this
+# stage) - as the sign-off record for this change.
+- name: Fetch running-config for the audit snapshot
+  ansible.netcommon.cli_command:
+    command: show running-config
+  register: network_baseline_postcheck_config
+
+- name: Save the post-deploy audit snapshot
+  ansible.builtin.copy:
+    content: |
+      Host: {{ inventory_hostname }}
+      Timestamp: {{ network_baseline_run_timestamp }}
+      Postcheck result: {{ 'COMPLIANT - matches baseline' if not network_baseline_drift_result.changed
+                            else 'NON-COMPLIANT - drift still present, see reports/drift/' }}
+      ---
+      {{ network_baseline_postcheck_config.stdout }}
+    dest: "{{ playbook_dir }}/../reports/postcheck/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.cfg"
+    mode: "0644"
+  delegate_to: localhost

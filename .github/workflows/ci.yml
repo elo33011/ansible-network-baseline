@@ -49,11 +49,8 @@ jobs:
       - name: Install required collections
         run: ansible-galaxy collection install -r requirements.yml
 
-      - name: Syntax-check check_drift.yml
-        run: ansible-playbook -i inventory/hosts.yml playbooks/check_drift.yml --syntax-check
-
-      - name: Syntax-check deploy_baseline.yml
-        run: ansible-playbook -i inventory/hosts.yml playbooks/deploy_baseline.yml --syntax-check
+      - name: Syntax-check the 5-stage pipeline playbooks
+        run: make syntax-check
 
   e2e-mock-device:
     needs: syntax-check
@@ -74,22 +71,21 @@ jobs:
       - name: Install mock device server dependencies
         run: pip install -r tests/mock_device/requirements.txt
 
-      - name: Run the real playbooks end-to-end against a mock IOS-XE device
+      - name: Run the real 5-stage pipeline end-to-end against a mock IOS-XE device
         # tests/mock_device/mock_ios_ssh_server.py is a local SSH server on
         # 127.0.0.1 speaking just enough real Cisco IOS CLI for
         # ansible.netcommon's network_cli connection + cisco.ios's
         # cliconf/terminal plugins to drive it - so this exercises the
-        # actual playbooks (check_drift.yml, deploy_baseline.yml) over a
-        # real SSH connection, with no lab or reachable device needed.
-        # See tests/mock_device/run_e2e.sh for the drift -> dry-run ->
-        # apply -> clean assertions this makes.
+        # actual pipeline playbooks (precheck.yml, dry_run.yml, deploy.yml,
+        # validate.yml, postcheck.yml) over a real SSH connection, with no
+        # lab or reachable device needed. See tests/mock_device/run_e2e.sh
+        # for the per-stage assertions this makes.
         run: make e2e
 
   # After this workflow is green on the main branch, the deploy workflow
-  # (deploy.yml) can be run by hand:
-  #   1. workflow_dispatch, apply=false, limit=network_test  -> dry run
-  #   2. workflow_dispatch, apply=true,  limit=network_test  -> apply to lab
-  #   3. workflow_dispatch, apply=false, limit=network_prod  -> dry run
-  #   4. workflow_dispatch, apply=true,  limit=network_prod  -> apply to prod
-  #      (gated by the "network-production" GitHub Environment's required
-  #      reviewers - see that workflow's comments)
+  # (deploy.yml) can be run by hand - apply=false runs precheck + dry_run
+  # only (read-only); apply=true runs all 5 stages (precheck, dry_run,
+  # deploy, validate, postcheck). For real devices, adapt deploy.yml per
+  # the README's "Deploying to real devices" section (self-hosted
+  # runner, --limit network_test/network_prod, and for network_prod the
+  # "network-production" GitHub Environment's required reviewers).

@@ -1,0 +1,14 @@
+---
+# Pipeline stage 5/5 - POSTCHECK: read-only, same pass/fail gate as
+# validate.yml (fails if drift remains), plus writes a final
+# "as-deployed" audit snapshot of the device's running-config to
+# reports/postcheck/ as a permanent sign-off record for this change.
+#
+#   ansible-playbook playbooks/postcheck.yml --limit network_test
+- name: "Pipeline stage 5/5: postcheck and record the audit snapshot"
+  hosts: network_baseline_devices
+  gather_facts: false
+  vars:
+    network_baseline_stage: postcheck
+  roles:
+    - network_baseline

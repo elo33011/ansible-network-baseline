@@ -6,14 +6,14 @@ name: Deploy
 # viable here at all: ansible.netcommon.cli_config connects directly over
 # SSH, and a GitHub-hosted runner has no route to a real device's private
 # management IP - only to this loopback mock. No self-hosted runner, no
-# vault, no real device needed; this demonstrates the actual
-# check_drift.yml -> deploy_baseline.yml flow as a real GitHub Actions
-# deploy, not just a CI assertion.
+# vault, no real device needed; this demonstrates the actual 5-stage
+# pipeline (precheck -> dry_run -> deploy -> validate -> postcheck) as a
+# real GitHub Actions deploy, not just a CI assertion.
 #
 # This workflow is only meant to be run after "CI" (ci.yml) is green on
 # the commit being deployed - enforce that with a branch protection rule
-# requiring that check on `main`. It always runs the read-only drift
-# check first, then a dry run, and only applies for real when the "apply"
+# requiring that check on `main`. precheck and dry_run always run
+# (read-only); deploy, validate and postcheck only run when the "apply"
 # input is checked.
 #
 # To deploy to REAL devices on a private network instead of the mock,
@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: 'Apply changes (unchecked = drift check + dry run only)'
+        description: 'Apply changes (unchecked = precheck + dry run only)'
         type: boolean
         default: false
 
@@ -58,23 +58,35 @@ jobs:
           for i in $(seq 1 50); do [ -s /tmp/mock_ready ] && break; sleep 0.2; done
           test -s /tmp/mock_ready
 
-      - name: Read-only drift check (never changes the device)
+      - name: "Stage 1/5: precheck (informational - never blocks this workflow)"
         run: |
-          ansible-playbook playbooks/check_drift.yml \
+          ansible-playbook playbooks/precheck.yml \
             --limit network_mock \
             -e network_baseline_fail_on_drift=false
 
-      - name: Dry run (always, shows the diff that would be applied)
+      - name: "Stage 2/5: dry run (always, shows the diff that would be applied)"
         run: |
-          ansible-playbook playbooks/deploy_baseline.yml \
-            --check --diff \
+          ansible-playbook playbooks/dry_run.yml \
+            --diff \
             --limit network_mock
 
-      - name: Apply
+      - name: "Stage 3/5: deploy (the actual push)"
         if: ${{ inputs.apply }}
         run: |
-          ansible-playbook playbooks/deploy_baseline.yml \
+          ansible-playbook playbooks/deploy.yml \
             --diff \
+            --limit network_mock
+
+      - name: "Stage 4/5: validate (fails if drift remains after deploy)"
+        if: ${{ inputs.apply }}
+        run: |
+          ansible-playbook playbooks/validate.yml \
+            --limit network_mock
+
+      - name: "Stage 5/5: postcheck (fails if drift remains, records the audit snapshot)"
+        if: ${{ inputs.apply }}
+        run: |
+          ansible-playbook playbooks/postcheck.yml \
             --limit network_mock
 
       - name: Upload rendered configs and reports
@@ -85,4 +97,5 @@ jobs:
           path: |
             reports/rendered/
             reports/drift/
+            reports/postcheck/
           if-no-files-found: ignore

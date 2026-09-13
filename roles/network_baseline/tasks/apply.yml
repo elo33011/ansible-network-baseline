@@ -1,10 +1,11 @@
 ---
 # Pushes only the lines that differ from the running-config (diff-based,
-# idempotent). No check_mode attribute is set here on purpose: this task
-# inherits whatever mode the play was invoked with, so
-# `ansible-playbook playbooks/deploy_baseline.yml --check --diff` is a
-# true dry run (identical logic path to a real run, just simulated), and
-# a normal run applies for real.
+# idempotent). Used only by playbooks/deploy.yml (the actual-run stage) -
+# dry_run.yml is a separate playbook/task (check_only.yml) that never
+# reaches this file. No check_mode attribute is set here on purpose: it
+# inherits whatever mode the play was invoked with, so someone can still
+# pass --check to deploy.yml as an extra safety net and get a true dry
+# run (identical logic path, just simulated) instead of a real push.
 - name: Reconcile device configuration with the baseline (diff-only push)
   # ansible.netcommon.cli_config always diffs `config:` against the
   # device's running-config (it calls connection.get_config() itself) -

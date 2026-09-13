@@ -1,5 +1,5 @@
 ---
-# Safe default: never push changes unless a playbook explicitly opts into
-# "deploy" mode. check_drift.yml always forces check-only regardless of
-# this value.
-network_baseline_mode: check
+# Safe default: read-only, and blocks (fails) if drift is found. Every
+# playbook in playbooks/ sets network_baseline_stage explicitly - this
+# only matters if the role is ever invoked without one.
+network_baseline_stage: precheck

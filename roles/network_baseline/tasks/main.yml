@@ -6,10 +6,14 @@
 - name: Render candidate configuration from the data model
   ansible.builtin.import_tasks: render.yml
 
-- name: Read-only baseline drift check
-  ansible.builtin.import_tasks: drift_check_forced.yml
-  when: network_baseline_mode == 'check'
+- name: Read-only check (precheck / dry_run / validate / postcheck)
+  ansible.builtin.import_tasks: check_only.yml
+  when: network_baseline_stage in ['precheck', 'dry_run', 'validate', 'postcheck']
 
-- name: Deploy baseline configuration (respects --check for dry run)
+- name: Push the baseline configuration for real
   ansible.builtin.import_tasks: apply.yml
-  when: network_baseline_mode == 'deploy'
+  when: network_baseline_stage == 'deploy'
+
+- name: Save the post-deploy audit snapshot
+  ansible.builtin.import_tasks: save_audit_snapshot.yml
+  when: network_baseline_stage == 'postcheck'

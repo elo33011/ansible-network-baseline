@@ -1,0 +1,17 @@
+---
+# Pipeline stage 3/5 - DEPLOY: pushes only the lines that differ from
+# the running-config (diff-based, idempotent). This is the only stage
+# in the pipeline that changes a device - run precheck.yml and
+# dry_run.yml first.
+#
+#   ansible-playbook playbooks/deploy.yml --diff --limit network_test
+#
+# Single device:
+#   ansible-playbook playbooks/deploy.yml --diff --limit test-sw01
+- name: "Pipeline stage 3/5: deploy the baseline configuration"
+  hosts: network_baseline_devices
+  gather_facts: false
+  vars:
+    network_baseline_stage: deploy
+  roles:
+    - network_baseline

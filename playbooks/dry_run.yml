@@ -1,0 +1,16 @@
+---
+# Pipeline stage 2/5 - DRY RUN: read-only, always (check_mode is
+# hard-coded inside the role for this stage - no --check flag needed).
+# Shows exactly what deploy.yml would change, for human review before
+# the real push. Never fails on drift - finding a diff to show is the
+# whole point of this stage, not a failure.
+#
+#   ansible-playbook playbooks/dry_run.yml --diff --limit network_test
+- name: "Pipeline stage 2/5: dry run of the baseline deployment"
+  hosts: network_baseline_devices
+  gather_facts: false
+  vars:
+    network_baseline_stage: dry_run
+    network_baseline_fail_on_drift: false
+  roles:
+    - network_baseline

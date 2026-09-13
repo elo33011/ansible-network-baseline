@@ -1,8 +1,14 @@
 ---
-# Read-only drift check: compares the rendered candidate configuration
-# against the device's running-config and reports what would change,
-# WITHOUT ever pushing anything — check_mode: true is hard-coded here so
-# this task never applies, no matter how the calling playbook was invoked.
+# Read-only check: compares the rendered candidate configuration against
+# the device's running-config and reports what differs, WITHOUT ever
+# pushing anything — check_mode: true is hard-coded here so this task
+# never applies, no matter how the calling playbook was invoked.
+#
+# Shared by precheck.yml, dry_run.yml, validate.yml and postcheck.yml -
+# `network_baseline_stage` only affects labeling and report file names,
+# `network_baseline_fail_on_drift` (default true) controls whether
+# finding drift fails the playbook (dry_run.yml sets it false, since
+# showing drift is the whole point of that stage, not a failure).
 - name: Compare candidate configuration against running-config (read-only)
   # ansible.netcommon.cli_config always diffs `config:` against the
   # device's running-config (it calls connection.get_config() itself) -
@@ -13,34 +19,34 @@
   diff: true # forces module.diff (resp["diff"]["prepared"]) so banner drift is captured below, regardless of -D/--diff
   register: network_baseline_drift_result
 
-- name: Report drift status
+- name: Report result for stage {{ network_baseline_stage }}
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}:
+      {{ inventory_hostname }} [{{ network_baseline_stage }}]:
       {{ (network_baseline_drift_result.commands | default([]) | length | string) ~ ' line(s) out of baseline'
          if network_baseline_drift_result.changed else 'no drift - matches baseline' }}
 
-- name: Save drift report
+- name: Save report for stage {{ network_baseline_stage }}
   ansible.builtin.copy:
     content: |
       Host: {{ inventory_hostname }}
+      Stage: {{ network_baseline_stage }}
       Timestamp: {{ network_baseline_run_timestamp }}
       Drift detected: {{ network_baseline_drift_result.changed }}
       Lines that differ from the running-config (config_diff; banner
       changes are reported separately by the module and appear below the
       line list if present):
       {{ network_baseline_drift_result.diff.prepared | default('(none)') }}
-    dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt"
+    dest: "{{ playbook_dir }}/../reports/drift/{{ inventory_hostname }}_{{ network_baseline_stage }}_{{ network_baseline_run_timestamp }}.txt"
     mode: "0644"
   delegate_to: localhost
 
-- name: Fail the check if drift was found (informational gate for CI/CD)
+- name: Fail if drift was found (blocking gate)
   ansible.builtin.fail:
     msg: >-
-      Baseline drift detected on {{ inventory_hostname }} -
-      see reports/drift/{{ inventory_hostname }}_{{ network_baseline_run_timestamp }}.txt.
-      This does not block a manual review; set network_baseline_fail_on_drift=false
-      to only warn.
+      [{{ network_baseline_stage }}] Baseline drift detected on {{ inventory_hostname }} -
+      see reports/drift/{{ inventory_hostname }}_{{ network_baseline_stage }}_{{ network_baseline_run_timestamp }}.txt.
+      Set network_baseline_fail_on_drift=false to only warn.
   when:
     - network_baseline_drift_result.changed
     - network_baseline_fail_on_drift | default(true) | bool

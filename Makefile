@@ -1,4 +1,4 @@
-.PHONY: install lint syntax-check test e2e ci check-drift deploy-dry-run deploy
+.PHONY: install lint syntax-check test e2e ci precheck dry-run deploy validate postcheck pipeline
 
 LIMIT ?= network_test
 
@@ -12,8 +12,11 @@ lint:
 	ansible-lint playbooks roles
 
 syntax-check:
-	ansible-playbook -i inventory/hosts.yml playbooks/check_drift.yml --syntax-check
-	ansible-playbook -i inventory/hosts.yml playbooks/deploy_baseline.yml --syntax-check
+	ansible-playbook -i inventory/hosts.yml playbooks/precheck.yml --syntax-check
+	ansible-playbook -i inventory/hosts.yml playbooks/dry_run.yml --syntax-check
+	ansible-playbook -i inventory/hosts.yml playbooks/deploy.yml --syntax-check
+	ansible-playbook -i inventory/hosts.yml playbooks/validate.yml --syntax-check
+	ansible-playbook -i inventory/hosts.yml playbooks/postcheck.yml --syntax-check
 
 # Runs the real playbooks end-to-end (real SSH, real network_cli
 # connection, real cisco.ios plugins) against a local mock IOS-XE SSH
@@ -32,11 +35,28 @@ test: e2e
 # Everything the CI pipeline runs, in one shot.
 ci: lint syntax-check e2e
 
-check-drift:
-	ansible-playbook playbooks/check_drift.yml --limit $(LIMIT) --ask-vault-pass
+# The 5-stage deploy pipeline, one playbook per stage. Each is safe to
+# run alone; `pipeline` below chains all 5 against a real/lab device.
+precheck:
+	ansible-playbook playbooks/precheck.yml --limit $(LIMIT) --ask-vault-pass
 
-deploy-dry-run:
-	ansible-playbook playbooks/deploy_baseline.yml --check --diff --limit $(LIMIT) --ask-vault-pass
+dry-run:
+	ansible-playbook playbooks/dry_run.yml --diff --limit $(LIMIT) --ask-vault-pass
 
 deploy:
-	ansible-playbook playbooks/deploy_baseline.yml --diff --limit $(LIMIT) --ask-vault-pass
+	ansible-playbook playbooks/deploy.yml --diff --limit $(LIMIT) --ask-vault-pass
+
+validate:
+	ansible-playbook playbooks/validate.yml --limit $(LIMIT) --ask-vault-pass
+
+postcheck:
+	ansible-playbook playbooks/postcheck.yml --limit $(LIMIT) --ask-vault-pass
+
+# Runs the full pipeline in order against a real/lab device, stopping at
+# the first stage that fails (make's default behavior for prerequisites) -
+# so a drifted device fails at precheck and never reaches deploy, and a
+# deploy that didn't actually take effect fails at validate/postcheck.
+# To push past a precheck failure and see the plan anyway, run
+# playbooks/precheck.yml directly with -e network_baseline_fail_on_drift=false
+# (see precheck.yml's own header comment) instead of `make precheck`.
+pipeline: precheck dry-run deploy validate postcheck
