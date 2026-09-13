@@ -18,6 +18,8 @@ standard and fix only what's different.
 
 ## How it works
 
+![Five steps in order: write the standard once, check what's actually on the device, show the plan for what would change, make only the change that's needed, then check again and keep a record. Only step 4 changes anything on the device.](docs/how-it-works.svg)
+
 1. **Write down the standard.** One file lists what every device
    should have — banner text, time servers, where alerts and logs go.
 2. **Check first.** Before touching anything, it logs into a device and
