@@ -152,6 +152,14 @@ and pull request that touches this project:
    action all 5 jobs share) and the `--state-file` option in
    `tests/mock_device/mock_ios_ssh_server.py`.
 
+   ![Each of the 5 CI jobs runs in its own isolated VM and starts its own fresh mock IOS-XE device: precheck, deploy-dry-run and deploy each seed independently from the same static repo file, while validate and postcheck seed from the post-deploy-device-state artifact that deploy uploads, so they check deploy's actual result instead of a freshly reset device.](docs/pipeline-architecture.svg)
+
+   *Solid amber arrows are the one thing that actually carries data
+   between jobs — deploy's device state, handed to validate and
+   postcheck through a GitHub Actions artifact. Dashed amber arrows
+   look similar but aren't a handoff: they're three independent jobs
+   each reading the same static file from their own checkout.*
+
    This is the *only* test layer in this repo — there's no separate
    fast/no-Ansible unit-test step, because the Jinja2 that renders the
    config lives inside the tasks themselves (see
