@@ -123,28 +123,45 @@ and pull request that touches this project:
 2. **syntax-check** — `ansible-playbook --syntax-check` on all 5
    pipeline playbooks, with the real collections installed, catching
    bad task structure, undefined module names, etc.
-3. **e2e-mock-device** — runs all 5 pipeline playbooks for real: real
-   SSH, real `ansible.netcommon` `network_cli` connection, real
-   `cisco.ios` cliconf/terminal plugins, real
-   `ansible.netcommon.cli_config` module — against
-   `tests/mock_device/mock_ios_ssh_server.py`, a small SSH server that
-   speaks just enough real Cisco IOS CLI (terminal setup,
+3. **precheck**, **deploy-dry-run**, **deploy**, **validate**,
+   **postcheck** — one job per pipeline playbook, named after the
+   stage, each running that playbook for real: real SSH, real
+   `ansible.netcommon` `network_cli` connection, real `cisco.ios`
+   cliconf/terminal plugins, real `ansible.netcommon.cli_config` module
+   — against `tests/mock_device/mock_ios_ssh_server.py`, a small SSH
+   server that speaks just enough real Cisco IOS CLI (terminal setup,
    `enable`/privilege escalation, `show running-config`, `configure
    terminal` line pushes, and the special `banner ... @` push path) to
    be driven exactly like a real device would be, without needing a lab
-   or a reachable device. `tests/mock_device/run_e2e.sh` seeds it with
-   a drifted config (`tests/mock_device/seed_running_config_drift.txt`)
-   and asserts each stage in order: `precheck.yml` finds the drift and
-   exits non-zero -> `dry_run.yml` reports what would change and
-   leaves the device untouched -> `deploy.yml` applies it for real ->
-   `validate.yml` confirms clean -> `postcheck.yml` confirms clean and
-   writes the audit snapshot. This is the *only* test layer in this
-   repo — there's no separate fast/no-Ansible unit-test step, because
-   the Jinja2 that renders the config lives inside the tasks themselves
-   (see [How the pieces fit together](#how-the-pieces-fit-together)),
-   so there's nothing template-shaped left to test in isolation from
+   or a reachable device.
+
+   Each of these 5 jobs runs in its own isolated VM (GitHub Actions
+   jobs share no memory), so each starts its *own* fresh mock server —
+   `precheck` and `deploy-dry-run` both seed it with the same drifted
+   config (`tests/mock_device/seed_running_config_drift.txt`) since
+   they're read-only and independent (they run in parallel, both
+   gating `deploy`). `deploy` also seeds from that drifted config, but
+   its mock server is started with `--state-file`, which keeps a copy
+   of the device's live config on disk as it changes; after `deploy.yml`
+   runs, that file is uploaded as the `post-deploy-device-state`
+   artifact. `validate` and `postcheck` each download that artifact and
+   seed *their* fresh mock server from it instead of the original
+   drifted config — so they're genuinely checking the state `deploy`
+   left behind, not asserting against a device that was reset back to
+   drifted. See `.github/actions/mock-device-setup` (the composite
+   action all 5 jobs share) and the `--state-file` option in
+   `tests/mock_device/mock_ios_ssh_server.py`.
+
+   This is the *only* test layer in this repo — there's no separate
+   fast/no-Ansible unit-test step, because the Jinja2 that renders the
+   config lives inside the tasks themselves (see
+   [How the pieces fit together](#how-the-pieces-fit-together)), so
+   there's nothing template-shaped left to test in isolation from
    Ansible. It runs entirely over loopback, so it needs nothing beyond
-   a GitHub-hosted runner.
+   a GitHub-hosted runner. (Locally, `tests/mock_device/run_e2e.sh` /
+   `make e2e` runs the same 5 stages sequentially against one long-lived
+   mock server in a single script — simpler for local dev, since there's
+   no cross-job state-handoff problem to solve outside CI.)
 
    *(Why a mock device instead of Cisco's DevNet Always-On IOS-XE
    sandbox: this repo was built in a sandboxed environment with no
@@ -397,7 +414,8 @@ NX-OS, etc.:
   only `deploy.yml`, run without `--check`, does.
 - There's no standalone Jinja2 template file and no separate
   no-Ansible unit-test layer for it — the config-rendering logic lives
-  entirely inside `roles/network_baseline/tasks/render.yml`, so the
-  `e2e-mock-device` CI job (real `ansible-playbook`, real SSH, against
-  the mock device) is the only thing that proves it renders and deploys
-  correctly. See [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying).
+  entirely inside `roles/network_baseline/tasks/render.yml`, so the CI
+  pipeline's `precheck`/`deploy-dry-run`/`deploy`/`validate`/`postcheck`
+  jobs (real `ansible-playbook`, real SSH, against the mock device) are
+  the only thing that proves it renders and deploys correctly. See
+  [Develop and test in the pipeline before deploying](#develop-and-test-in-the-pipeline-before-deploying).

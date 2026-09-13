@@ -1,10 +1,20 @@
 name: CI
 
-# Develop-and-test pipeline: lints and tests the playbooks/role/templates
-# on every push and pull request, using ONLY GitHub-hosted runners (no
-# network device access needed). This is the gate that must be green
-# before anyone runs the deploy workflow (deploy.yml) against real
-# devices.
+# Develop-and-test pipeline: lints and tests the playbooks/role on every
+# push and pull request, using ONLY GitHub-hosted runners (no network
+# device access needed). This is the gate that must be green before
+# anyone runs the deploy workflow (deploy.yml) against real devices.
+#
+# The 5-stage deploy pipeline (precheck, deploy-dry-run, deploy,
+# validate, postcheck) is exercised for real here, one job per playbook,
+# named after the stage - each job's own status check shows which stage
+# broke. Each job starts its own fresh mock IOS-XE SSH server (GitHub
+# Actions jobs run in separate, isolated VMs with no shared memory), so
+# the device state deploy.yml leaves behind is handed from the deploy
+# job to validate/postcheck via an uploaded/downloaded artifact
+# (post-deploy-device-state) rather than assumed to still be there - see
+# .github/actions/mock-device-setup and tests/mock_device/mock_ios_ssh_server.py's
+# --state-file option.
 
 on:
   push:
@@ -52,35 +62,171 @@ jobs:
       - name: Syntax-check the 5-stage pipeline playbooks
         run: make syntax-check
 
-  e2e-mock-device:
+  precheck:
     needs: syntax-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up the mock device (seeded with drift)
+        uses: ./.github/actions/mock-device-setup
         with:
-          python-version: '3.12'
+          seed-file: tests/mock_device/seed_running_config_drift.txt
 
-      - name: Install Ansible + SSH client library
-        run: pip install "ansible-core>=2.15,<2.20" paramiko
+      - name: "Stage 1/5: precheck.yml against a drifted device (expect it to block)"
+        run: |
+          set +e
+          OUT="$(ansible-playbook playbooks/precheck.yml --limit network_mock 2>&1)"
+          RC=$?
+          set -e
+          echo "${OUT}"
+          if [[ ${RC} -eq 0 ]]; then
+            echo "::error::precheck.yml exited 0 against a drifted device (expected non-zero)"
+            exit 1
+          fi
+          if ! grep -q "Baseline drift detected" <<< "${OUT}"; then
+            echo "::error::precheck.yml did not report drift"
+            exit 1
+          fi
+          echo "precheck correctly blocked on drift"
 
-      - name: Install required collections
-        run: ansible-galaxy collection install -r requirements.yml
+  deploy-dry-run:
+    needs: syntax-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Install mock device server dependencies
-        run: pip install -r tests/mock_device/requirements.txt
+      - name: Set up the mock device (seeded with drift)
+        uses: ./.github/actions/mock-device-setup
+        with:
+          seed-file: tests/mock_device/seed_running_config_drift.txt
 
-      - name: Run the real 5-stage pipeline end-to-end against a mock IOS-XE device
-        # tests/mock_device/mock_ios_ssh_server.py is a local SSH server on
-        # 127.0.0.1 speaking just enough real Cisco IOS CLI for
-        # ansible.netcommon's network_cli connection + cisco.ios's
-        # cliconf/terminal plugins to drive it - so this exercises the
-        # actual pipeline playbooks (precheck.yml, dry_run.yml, deploy.yml,
-        # validate.yml, postcheck.yml) over a real SSH connection, with no
-        # lab or reachable device needed. See tests/mock_device/run_e2e.sh
-        # for the per-stage assertions this makes.
-        run: make e2e
+      - name: "Stage 2/5: dry_run.yml shows the plan without changing the device"
+        run: |
+          OUT="$(ansible-playbook playbooks/dry_run.yml --diff --limit network_mock 2>&1)"
+          echo "${OUT}"
+          if ! grep -q "line(s) out of baseline" <<< "${OUT}"; then
+            echo "::error::dry_run.yml did not report the drift it would fix"
+            exit 1
+          fi
+          OUT2="$(ansible-playbook playbooks/precheck.yml --limit network_mock -e network_baseline_fail_on_drift=false 2>&1)"
+          if ! grep -q "line(s) out of baseline" <<< "${OUT2}"; then
+            echo "::error::device was modified by dry_run.yml"
+            exit 1
+          fi
+          echo "dry run reported the change but left the device untouched"
+
+  deploy:
+    needs: [precheck, deploy-dry-run]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the mock device (seeded with drift)
+        uses: ./.github/actions/mock-device-setup
+        with:
+          seed-file: tests/mock_device/seed_running_config_drift.txt
+          state-file: /tmp/device_state.cfg
+
+      - name: "Stage 3/5: deploy.yml pushes the diff for real"
+        run: |
+          OUT="$(ansible-playbook playbooks/deploy.yml --diff --limit network_mock 2>&1)"
+          echo "${OUT}"
+          if ! grep -q "mock-sw01: changed" <<< "${OUT}"; then
+            echo "::error::deploy.yml did not report a change"
+            exit 1
+          fi
+          echo "deploy pushed the baseline to the device"
+
+      - name: Save the post-deploy device state for validate/postcheck
+        # validate/postcheck run in their own fresh jobs/VMs and can't see
+        # this job's in-memory mock server, so hand off the actual
+        # post-deploy config (kept in sync on disk by --state-file) as an
+        # artifact instead of assuming it's still there.
+        run: cp /tmp/device_state.cfg post-deploy-device-state.cfg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-device-state
+          path: post-deploy-device-state.cfg
+
+  validate:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: post-deploy-device-state
+
+      - name: Set up the mock device (seeded with deploy's actual result)
+        uses: ./.github/actions/mock-device-setup
+        with:
+          seed-file: post-deploy-device-state.cfg
+
+      - name: "Stage 4/5: validate.yml confirms the deploy actually took effect"
+        run: |
+          set +e
+          OUT="$(ansible-playbook playbooks/validate.yml --limit network_mock 2>&1)"
+          RC=$?
+          set -e
+          echo "${OUT}"
+          if [[ ${RC} -ne 0 ]]; then
+            echo "::error::validate.yml still reports drift after deploy.yml"
+            exit 1
+          fi
+          if ! grep -q "no drift - matches baseline" <<< "${OUT}"; then
+            echo "::error::validate.yml did not report a clean device"
+            exit 1
+          fi
+          echo "validate confirms the device matches baseline after deploy"
+
+  postcheck:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: post-deploy-device-state
+
+      - name: Set up the mock device (seeded with deploy's actual result)
+        uses: ./.github/actions/mock-device-setup
+        with:
+          seed-file: post-deploy-device-state.cfg
+
+      - name: "Stage 5/5: postcheck.yml confirms compliance and records the audit snapshot"
+        run: |
+          set +e
+          OUT="$(ansible-playbook playbooks/postcheck.yml --limit network_mock 2>&1)"
+          RC=$?
+          set -e
+          echo "${OUT}"
+          if [[ ${RC} -ne 0 ]]; then
+            echo "::error::postcheck.yml reports drift after deploy.yml"
+            exit 1
+          fi
+          if ! grep -q "no drift - matches baseline" <<< "${OUT}"; then
+            echo "::error::postcheck.yml did not report a clean device"
+            exit 1
+          fi
+          snapshot_count=$(find reports/postcheck -name '*.cfg' | wc -l)
+          if [[ "${snapshot_count}" -lt 1 ]]; then
+            echo "::error::postcheck.yml did not write an audit snapshot"
+            exit 1
+          fi
+          if ! grep -q "COMPLIANT - matches baseline" reports/postcheck/*.cfg; then
+            echo "::error::audit snapshot did not record a COMPLIANT result"
+            exit 1
+          fi
+          echo "postcheck confirms compliance and records the audit snapshot"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postcheck-audit-snapshot
+          path: reports/postcheck/
 
   # After this workflow is green on the main branch, the deploy workflow
   # (deploy.yml) can be run by hand - apply=false runs precheck + dry_run

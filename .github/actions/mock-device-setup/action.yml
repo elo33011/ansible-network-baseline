@@ -1,0 +1,45 @@
+name: Set up mock IOS-XE pipeline environment
+description: >-
+  Installs Ansible, the required collections, and the mock device
+  server's dependencies, then starts tests/mock_device/mock_ios_ssh_server.py
+  seeded from the given file - shared setup for the precheck/deploy-dry-run/
+  deploy/validate/postcheck CI jobs, so each stays focused on its own
+  playbook and assertions.
+
+inputs:
+  seed-file:
+    description: Path to the seed show-running-config file to start the mock device with
+    required: true
+  state-file:
+    description: Path to continuously persist the device's live config to (same format as seed-file)
+    required: false
+    default: /tmp/device_state.cfg
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Ansible + SSH client library
+      shell: bash
+      run: pip install "ansible-core>=2.15,<2.20" paramiko
+
+    - name: Install required collections
+      shell: bash
+      run: ansible-galaxy collection install -r requirements.yml
+
+    - name: Install mock device server dependencies
+      shell: bash
+      run: pip install -r tests/mock_device/requirements.txt
+
+    - name: Start the mock IOS-XE SSH server
+      shell: bash
+      run: |
+        python3 tests/mock_device/mock_ios_ssh_server.py \
+          --seed "${{ inputs.seed-file }}" \
+          --state-file "${{ inputs.state-file }}" \
+          --ready-file /tmp/mock_ready &
+        for i in $(seq 1 50); do [ -s /tmp/mock_ready ] && break; sleep 0.2; done
+        test -s /tmp/mock_ready

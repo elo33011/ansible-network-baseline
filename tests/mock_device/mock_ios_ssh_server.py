@@ -53,12 +53,19 @@ BANNER_RE = re.compile(r"^banner (\w+) \^C\n(.*?)\n\^C\s*$", re.M | re.S)
 
 
 class MockDevice:
-    def __init__(self, hostname, seed_path=None):
+    def __init__(self, hostname, seed_path=None, state_file=None):
         self.hostname = hostname
         self.lines = []
         self.banners = {}
+        # Written on every config change, in the same format as a seed
+        # file, so a later process (e.g. a different CI job/VM, which
+        # can't share this process's memory) can start a fresh server
+        # from exactly the state this one ended up in - see
+        # `_persist()`.
+        self.state_file = state_file
         if seed_path and os.path.exists(seed_path):
             self._load_seed(seed_path)
+        self._persist()
 
     def _load_seed(self, path):
         with open(path) as f:
@@ -82,12 +89,21 @@ class MockDevice:
             if line.startswith(prefix):
                 self.lines = [existing for existing in self.lines if not existing.startswith(prefix)]
                 self.lines.append(line)
+                self._persist()
                 return
         if line not in self.lines:
             self.lines.append(line)
+            self._persist()
 
     def set_banner(self, key, content):
         self.banners[key] = content.strip()
+        self._persist()
+
+    def _persist(self):
+        if not self.state_file:
+            return
+        with open(self.state_file, "w") as f:
+            f.write(self.running_config_text())
 
     def running_config_text(self):
         parts = [f"hostname {self.hostname}", "!"]
@@ -270,7 +286,7 @@ class IOSServer(asyncssh.SSHServer):
 
 
 async def main_async(args):
-    device = MockDevice(args.hostname, args.seed)
+    device = MockDevice(args.hostname, args.seed, args.state_file)
 
     def server_factory():
         return IOSServer(device, args.username, args.password, args.enable_password)
@@ -299,6 +315,12 @@ def main():
         default=os.environ.get("MOCK_IOS_ENABLE_PASSWORD", "C1sco12345enable"),
     )
     parser.add_argument("--seed", default=None, help="path to a seed show-running-config text file")
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="path to continuously write the device's current config to (same format as --seed, "
+        "so a later process/CI job can start a fresh server from exactly this one's ending state)",
+    )
     parser.add_argument("--ready-file", default=None, help="written once the server is listening")
     args = parser.parse_args()
 

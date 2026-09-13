@@ -2,7 +2,8 @@ name: Deploy
 
 # Runs on a plain GitHub-hosted runner (ubuntu-latest) against the mock
 # IOS-XE SSH server (tests/mock_device/mock_ios_ssh_server.py) - the same
-# one CI's e2e-mock-device job uses. That's what makes ubuntu-latest
+# one CI's precheck/deploy-dry-run/deploy/validate/postcheck jobs use.
+# That's what makes ubuntu-latest
 # viable here at all: ansible.netcommon.cli_config connects directly over
 # SSH, and a GitHub-hosted runner has no route to a real device's private
 # management IP - only to this loopback mock. No self-hosted runner, no
