@@ -19,10 +19,10 @@ name: Deploy
 #
 # To deploy to REAL devices on a private network instead of the mock,
 # this needs a self-hosted runner with SSH reachability to them - see
-# ci/setup-self-hosted-runner.sh and the "Running from GitHub Actions"
-# section of the README for the vault-backed variant of this workflow
-# (`runs-on: [self-hosted, network]`, `--limit network_test`/`network_prod`,
-# ANSIBLE_VAULT_* secrets).
+# ci/setup-self-hosted-runner.sh and the "Deploying to real devices"
+# section of docs/DEVELOPMENT.md for the vault-backed variant of this
+# workflow (`runs-on: [self-hosted, network]`, `--limit
+# network_test`/`network_prod`, ANSIBLE_VAULT_* secrets).
 
 on:
   workflow_dispatch:

@@ -232,6 +232,7 @@ jobs:
   # (deploy.yml) can be run by hand - apply=false runs precheck + dry_run
   # only (read-only); apply=true runs all 5 stages (precheck, dry_run,
   # deploy, validate, postcheck). For real devices, adapt deploy.yml per
-  # the README's "Deploying to real devices" section (self-hosted
-  # runner, --limit network_test/network_prod, and for network_prod the
-  # "network-production" GitHub Environment's required reviewers).
+  # docs/DEVELOPMENT.md's "Deploying to real devices" section
+  # (self-hosted runner, --limit network_test/network_prod, and for
+  # network_prod the "network-production" GitHub Environment's required
+  # reviewers).
