@@ -18,7 +18,7 @@ standard and fix only what's different.
 
 ## How it works
 
-![Five steps in order: write the standard once, check what's actually on the device, show the plan for what would change, make only the change that's needed, then check again and keep a record. Only step 4 changes anything on the device.](docs/how-it-works.svg)
+![baseline.yml is the source of truth. Ansible reads it and runs five steps in order, each its own playbook except step 1: write the standard (the baseline.yml file itself), check first (precheck.yml), show the plan (dry_run.yml), make the change (deploy.yml, the only step that touches a device), and check again (validate.yml then postcheck.yml).](docs/how-it-works.svg)
 
 1. **Write down the standard.** One file lists what every device
    should have — banner text, time servers, where alerts and logs go.
